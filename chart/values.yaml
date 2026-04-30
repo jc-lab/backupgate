@@ -97,7 +97,7 @@ hostAliases: []
 ## @param command Override default container command (useful when using custom images)
 ## @param args Override default container args (useful when using custom images)
 ##
-command: ["/app/server.exe", "--config", "/etc/backupgate/config.yaml"]
+command: ["/app/backupgate.exe", "--config", "/etc/backupgate/config.yaml"]
 args: []
 ## @param extraEnvVars Extra environment variables to be set on backupgate containers
 ## E.g:
@@ -397,7 +397,7 @@ service:
   ## @param service.ports.https Service HTTPS port
   ##
   ports:
-    http: 5000
+    http: 8080
   ##
   ## @param service.nodePorts [object] Specify the nodePort(s) value(s) for the LoadBalancer and NodePort service types.
   ## ref: https://kubernetes.io/docs/concepts/services-networking/service/#type-nodeport
