@@ -57,7 +57,8 @@ type Config struct {
 
 // ServerConfig holds HTTP server settings.
 type ServerConfig struct {
-	API APIConfig `yaml:"api"`
+	API   APIConfig     `yaml:"api"`
+	Debug *ListenConfig `yaml:"debug,omitempty"`
 }
 
 // APIConfig holds API endpoint settings.

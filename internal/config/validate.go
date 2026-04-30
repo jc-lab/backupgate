@@ -15,6 +15,9 @@ func Validate(cfg *Config) error {
 	if err := validateAPI(&cfg.Server.API); err != nil {
 		errs = append(errs, err.Error())
 	}
+	if cfg.Server.Debug != nil && cfg.Server.Debug.Listen == "" {
+		errs = append(errs, "server.debug: listen is required when debug is configured")
+	}
 
 	if err := validateStorage(&cfg.Storage); err != nil {
 		errs = append(errs, err.Error())

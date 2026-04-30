@@ -35,6 +35,8 @@ go build -o backupgate ./cmd/backupgate
 - `BACKUPGATE_CONFIG`: 설정 파일 경로를 지정합니다. `-config` 플래그보다 우선하지는 않지만, 플래그를 생략했을 때 기본 경로로 사용됩니다.
 - `BACKUPGATE_LOG_LEVEL`: 로그 레벨을 지정합니다. 예: `debug`, `info`, `warn`, `error`
 
+`server.debug.listen`을 설정하면 별도 디버그 서버가 뜨고, `GET /debug/health`는 `{"status":"UP"}` JSON을 반환합니다.
+
 ## 설정 예시
 
 ```yaml
@@ -42,6 +44,8 @@ server:
   api:
     mode: header
     listen: ":8080"
+  debug:
+    listen: ":5000"
 
 buffer:
   memory: 67108864

@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 server:
+  debug:
+    listen: ":5000"
   api:
     mode: header
     listen: ":8080"

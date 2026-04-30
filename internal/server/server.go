@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -36,6 +37,9 @@ func NewServer(cfg *config.Config, handler *api.Handler) *Server {
 // In header mode, a single server listens on one port.
 // In port mode, separate servers listen for S3 and HTTP traffic.
 func (s *Server) Start(ctx context.Context) error {
+	if err := s.startDebugServer(); err != nil {
+		return err
+	}
 	switch s.cfg.Server.API.Mode {
 	case config.APIModeHeader:
 		return s.startHeaderMode(ctx)
@@ -44,6 +48,46 @@ func (s *Server) Start(ctx context.Context) error {
 	default:
 		return fmt.Errorf("unknown API mode: %s", s.cfg.Server.API.Mode)
 	}
+}
+
+func (s *Server) startDebugServer() error {
+	if s.cfg.Server.Debug == nil {
+		return nil
+	}
+
+	srv := &http.Server{
+		Addr:    s.cfg.Server.Debug.Listen,
+		Handler: s.newDebugHandler(),
+	}
+	s.servers = append(s.servers, srv)
+
+	slog.Info("starting server", "mode", "debug", "listen", s.cfg.Server.Debug.Listen)
+	l, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		return fmt.Errorf("failed to debug server listen: %w", err)
+	}
+
+	s.wg.Go(func() {
+		defer l.Close()
+		if err := srv.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("server serve failed", "mode", "debug", "listen", s.cfg.Server.Debug.Listen, "err", err)
+		}
+	})
+
+	return nil
+}
+
+func (s *Server) newDebugHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/health", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "UP"})
+	})
+	return mux
 }
 
 // startHeaderMode starts a single server with the header-detection router.
@@ -102,7 +146,7 @@ func (s *Server) startPortMode(ctx context.Context) error {
 	}()
 
 	slog.Info("starting server", "mode", "port", "protocol", "s3", "listen", s.cfg.Server.API.S3.Listen)
-	s3Listener, err := net.Listen("tcp", httpSrv.Addr)
+	s3Listener, err := net.Listen("tcp", s3Srv.Addr)
 	if err != nil {
 		return fmt.Errorf("failed to s3 server listen: %w", err)
 	}
