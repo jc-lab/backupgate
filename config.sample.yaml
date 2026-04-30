@@ -1,0 +1,39 @@
+# Copyright 2026 JC-Lab
+# SPDX-License-Identifier: AGPL-3.0-only
+
+server:
+  api:
+    mode: header
+    listen: ":8080"
+#    mode: port
+#    s3:
+#      listen: ":9000"
+#    http:
+#      listen: ":8080"
+
+buffer:
+  memory: 67108864
+  sliding_window_size: 1048576
+  max_memory_size: 1073741824
+  tmp_dir: ./temp
+
+storage:
+  type: sftp
+  sftp:
+    host: 127.0.0.1:22
+    username: username
+    password: password
+    base_path: /mnt/backupgate/
+
+keys:
+  database:
+    buffer_mode: FULLY_COMPLETE
+    verification: false
+    rotation:
+      max_count: 3
+      # max_age: 720h
+    auth:
+      - type: inline
+        credentials:
+          - username: test
+            password: test
