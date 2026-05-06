@@ -15,6 +15,7 @@ import (
 
 	"github.com/jc-lab/backupgate/internal/api"
 	"github.com/jc-lab/backupgate/internal/config"
+	"github.com/jc-lab/backupgate/internal/version"
 )
 
 // Server manages one or more HTTP listeners for the BackupGate API.
@@ -82,6 +83,7 @@ func (s *Server) startDebugServer() error {
 func (s *Server) debugHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/debug/health", s.handleDebugHealth)
+	mux.HandleFunc("/debug/version", s.handleDebugVersion)
 	return mux
 }
 
@@ -102,6 +104,15 @@ func (s *Server) handleDebugHealth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "UP"})
+}
+
+func (s *Server) handleDebugVersion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(version.Current())
 }
 
 // startHeaderMode starts a single server with the header-detection router.

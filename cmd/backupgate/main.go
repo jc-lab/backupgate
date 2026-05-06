@@ -22,14 +22,22 @@ import (
 	"github.com/jc-lab/backupgate/internal/rotation"
 	"github.com/jc-lab/backupgate/internal/server"
 	"github.com/jc-lab/backupgate/internal/storage"
+	"github.com/jc-lab/backupgate/internal/version"
 )
 
 func main() {
 	var configPath string
 	var logLevelStr string
+	var showVersion bool
 	flag.StringVar(&configPath, "config", getEnvOrDefault("BACKUPGATE_CONFIG", "config.yaml"), "path to configuration file")
 	flag.StringVar(&logLevelStr, "log-level", getEnvOrDefault("BACKUPGATE_LOG_LEVEL", "info"), "path to configuration file")
+	flag.BoolVar(&showVersion, "version", false, "print version information and exit")
 	flag.Parse()
+
+	if showVersion {
+		fmt.Fprintln(os.Stdout, version.String())
+		return
+	}
 
 	var logLevel slog.Level
 	if err := logLevel.UnmarshalText([]byte(strings.ToUpper(logLevelStr))); err != nil {

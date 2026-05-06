@@ -58,3 +58,34 @@ func TestDebugHealthEndpointDown(t *testing.T) {
 		t.Fatalf("payload = %#v, want error message", payload)
 	}
 }
+
+func TestDebugVersionEndpoint(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/debug/version", nil)
+
+	(&Server{}).handleDebugVersion(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if got := resp.Header.Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q, want application/json", got)
+	}
+
+	var payload map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if payload["version"] == "" {
+		t.Fatalf("payload = %#v, want version", payload)
+	}
+	if payload["commit"] == "" {
+		t.Fatalf("payload = %#v, want commit", payload)
+	}
+	if payload["build_date"] == "" {
+		t.Fatalf("payload = %#v, want build_date", payload)
+	}
+}
