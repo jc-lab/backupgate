@@ -19,17 +19,19 @@ import (
 
 // Server manages one or more HTTP listeners for the BackupGate API.
 type Server struct {
-	cfg     *config.Config
-	handler *api.Handler
-	servers []*http.Server
-	wg      sync.WaitGroup
+	cfg         *config.Config
+	handler     *api.Handler
+	healthCheck func(context.Context) error
+	servers     []*http.Server
+	wg          sync.WaitGroup
 }
 
 // NewServer creates a new Server.
 func NewServer(cfg *config.Config, handler *api.Handler) *Server {
 	return &Server{
-		cfg:     cfg,
-		handler: handler,
+		cfg:         cfg,
+		handler:     handler,
+		healthCheck: handler.HealthCheck,
 	}
 }
 
@@ -57,7 +59,7 @@ func (s *Server) startDebugServer() error {
 
 	srv := &http.Server{
 		Addr:    s.cfg.Server.Debug.Listen,
-		Handler: s.newDebugHandler(),
+		Handler: s.debugHandler(),
 	}
 	s.servers = append(s.servers, srv)
 
@@ -77,17 +79,29 @@ func (s *Server) startDebugServer() error {
 	return nil
 }
 
-func (s *Server) newDebugHandler() http.Handler {
+func (s *Server) debugHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/debug/health", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+	mux.HandleFunc("/debug/health", s.handleDebugHealth)
+	return mux
+}
+
+func (s *Server) handleDebugHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if s.healthCheck != nil {
+		if err := s.healthCheck(r.Context()); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"status": "DOWN",
+				"error":  err.Error(),
+			})
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "UP"})
-	})
-	return mux
+	}
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "UP"})
 }
 
 // startHeaderMode starts a single server with the header-detection router.

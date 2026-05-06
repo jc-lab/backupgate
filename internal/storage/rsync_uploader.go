@@ -15,25 +15,39 @@ import (
 	"github.com/gokrazy/rsync/rsyncclient"
 	"github.com/jc-lab/backupgate/internal/config"
 	"github.com/jc-lab/backupgate/internal/reader"
-	"golang.org/x/crypto/ssh"
 )
 
 // RsyncUploader transfers upload payloads using the rsync protocol over the
 // existing SSH connection. Other storage operations are intentionally left to
 // the primary SFTP backend.
 type RsyncUploader struct {
-	basePath  string
-	sshClient *ssh.Client
+	basePath string
+	sshCfg   *config.SFTPConfig
 }
 
 var _ Uploader = (*RsyncUploader)(nil)
 
 // NewRsyncUploader creates an upload-only rsync adapter.
-func NewRsyncUploader(cfg *config.RsyncConfig, sshClient *ssh.Client) *RsyncUploader {
+func NewRsyncUploader(cfg *config.RsyncConfig, sshCfg *config.SFTPConfig) *RsyncUploader {
 	return &RsyncUploader{
-		basePath:  cfg.BasePath,
-		sshClient: sshClient,
+		basePath: cfg.BasePath,
+		sshCfg:   sshCfg,
 	}
+}
+
+func (b *RsyncUploader) HealthCheck(ctx context.Context) error {
+	_ = ctx
+	sshClient, err := sshConnect(&sshConnectInfo{
+		Host:     b.sshCfg.Host,
+		Username: b.sshCfg.Username,
+		Password: b.sshCfg.Password,
+		KeyFile:  b.sshCfg.KeyFile,
+	})
+	if err != nil {
+		return fmt.Errorf("connecting SSH: %w", err)
+	}
+	defer sshClient.Close()
+	return nil
 }
 
 // Upload transfers the file using rsync's sender mode.
@@ -86,7 +100,18 @@ func (b *RsyncUploader) remotePath(rel string) string {
 }
 
 func (b *RsyncUploader) rsyncDo(ctx context.Context, stderr io.Writer, args []string, f func(c *sshReadWriter) error) error {
-	session, err := b.sshClient.NewSession()
+	sshClient, err := sshConnect(&sshConnectInfo{
+		Host:     b.sshCfg.Host,
+		Username: b.sshCfg.Username,
+		Password: b.sshCfg.Password,
+		KeyFile:  b.sshCfg.KeyFile,
+	})
+	if err != nil {
+		return fmt.Errorf("connecting SSH: %w", err)
+	}
+	defer sshClient.Close()
+
+	session, err := sshClient.NewSession()
 	if err != nil {
 		return fmt.Errorf("creating SSH session: %w", err)
 	}

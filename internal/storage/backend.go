@@ -38,6 +38,8 @@ type Uploader interface {
 type Backend interface {
 	Uploader
 
+	HealthCheck(context.Context) error
+
 	// Download reads the remote file for verification purposes.
 	Download(ctx context.Context, remotePath string) (io.ReadCloser, error)
 

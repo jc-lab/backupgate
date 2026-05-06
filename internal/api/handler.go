@@ -48,6 +48,11 @@ func (h *Handler) HandleHTTP(w http.ResponseWriter, r *http.Request) {
 	h.httpHandler.ServeHTTP(w, r)
 }
 
+// HealthCheck verifies the storage backend is reachable.
+func (h *Handler) HealthCheck(ctx context.Context) error {
+	return h.pipeline.HealthCheck(ctx)
+}
+
 // authenticate performs authentication for the given key using the configured auth chain.
 func (h *Handler) authenticate(r *http.Request, key string) (string, error) {
 	username, password, _ := r.BasicAuth()

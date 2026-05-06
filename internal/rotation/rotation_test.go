@@ -64,6 +64,10 @@ type recordingBackend struct {
 	deleted []string
 }
 
+func (b *recordingBackend) HealthCheck(ctx context.Context) error {
+	return nil
+}
+
 func (b *recordingBackend) Upload(context.Context, string, reader.UploadReader, int64) error {
 	return errors.New("not implemented")
 }

@@ -23,8 +23,15 @@ var _ Backend = (*rsyncUploadBackend)(nil)
 func NewRsyncUploadBackend(primary *SFTPBackend, cfg *config.RsyncConfig) Backend {
 	return &rsyncUploadBackend{
 		primary:  primary,
-		uploader: NewRsyncUploader(cfg, primary.sshClient),
+		uploader: NewRsyncUploader(cfg, primary.cfg),
 	}
+}
+
+func (b *rsyncUploadBackend) HealthCheck(ctx context.Context) error {
+	if hc, ok := any(b.primary).(interface{ HealthCheck(context.Context) error }); ok {
+		return hc.HealthCheck(ctx)
+	}
+	return nil
 }
 
 func (b *rsyncUploadBackend) Upload(ctx context.Context, remotePath string, r reader.UploadReader, size int64) error {

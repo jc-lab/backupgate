@@ -9,21 +9,16 @@ import (
 	"io"
 	"os"
 	"path"
-	"sync"
 
 	"github.com/jc-lab/backupgate/internal/config"
 	"github.com/jc-lab/backupgate/internal/reader"
 	"github.com/pkg/sftp"
-	"golang.org/x/crypto/ssh"
 )
 
 // SFTPBackend implements Backend using the SFTP protocol.
 type SFTPBackend struct {
-	cfg       *config.SFTPConfig
-	basePath  string
-	sshClient *ssh.Client
-	client    *sftp.Client
-	mu        sync.Mutex
+	cfg      *config.SFTPConfig
+	basePath string
 }
 
 var _ Backend = (*SFTPBackend)(nil)
@@ -34,14 +29,11 @@ func NewSFTPBackend(cfg *config.SFTPConfig) (*SFTPBackend, error) {
 		cfg:      cfg,
 		basePath: cfg.BasePath,
 	}
-	if err := b.connect(); err != nil {
-		return nil, err
-	}
 	return b, nil
 }
 
-// connect establishes the SSH + SFTP connection.
-func (b *SFTPBackend) connect() error {
+func (b *SFTPBackend) HealthCheck(ctx context.Context) error {
+	_ = ctx
 	sshClient, err := sshConnect(&sshConnectInfo{
 		Host:     b.cfg.Host,
 		Username: b.cfg.Username,
@@ -51,13 +43,13 @@ func (b *SFTPBackend) connect() error {
 	if err != nil {
 		return fmt.Errorf("connecting SSH: %w", err)
 	}
+	defer sshClient.Close()
+
 	client, err := sftp.NewClient(sshClient)
 	if err != nil {
-		sshClient.Close()
 		return fmt.Errorf("creating SFTP client: %w", err)
 	}
-	b.sshClient = sshClient
-	b.client = client
+	defer client.Close()
 	return nil
 }
 
@@ -68,17 +60,17 @@ func (b *SFTPBackend) Upload(ctx context.Context, remotePath string, r reader.Up
 		return err
 	}
 	fullPath := b.remotePath(remotePath)
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if err := b.client.MkdirAll(path.Dir(fullPath)); err != nil {
-		return fmt.Errorf("creating remote directory: %w", err)
-	}
-	f, err := b.client.OpenFile(fullPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
-	if err != nil {
-		return fmt.Errorf("creating remote file: %w", err)
-	}
-	defer f.Close()
-	return copyWithContext(ctx, f, r)
+	return b.withClient(func(client *sftp.Client) error {
+		if err := client.MkdirAll(path.Dir(fullPath)); err != nil {
+			return fmt.Errorf("creating remote directory: %w", err)
+		}
+		f, err := client.OpenFile(fullPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+		if err != nil {
+			return fmt.Errorf("creating remote file: %w", err)
+		}
+		defer f.Close()
+		return copyWithContext(ctx, f, r)
+	})
 }
 
 // ResumeUpload checks the remote file size and resumes from that offset.
@@ -89,56 +81,72 @@ func (b *SFTPBackend) ResumeUpload(ctx context.Context, remotePath string, r rea
 		return err
 	}
 	fullPath := b.remotePath(remotePath)
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if err := b.client.MkdirAll(path.Dir(fullPath)); err != nil {
-		return fmt.Errorf("creating remote directory: %w", err)
-	}
-	f, err := b.client.OpenFile(fullPath, os.O_CREATE|os.O_WRONLY)
-	if err != nil {
-		return fmt.Errorf("opening remote file for resume: %w", err)
-	}
-	defer f.Close()
-	if _, err := f.Seek(offset, io.SeekStart); err != nil {
-		return fmt.Errorf("seeking remote file: %w", err)
-	}
-	return copyWithContext(ctx, f, r)
+	return b.withClient(func(client *sftp.Client) error {
+		if err := client.MkdirAll(path.Dir(fullPath)); err != nil {
+			return fmt.Errorf("creating remote directory: %w", err)
+		}
+		f, err := client.OpenFile(fullPath, os.O_CREATE|os.O_WRONLY)
+		if err != nil {
+			return fmt.Errorf("opening remote file for resume: %w", err)
+		}
+		defer f.Close()
+		if _, err := f.Seek(offset, io.SeekStart); err != nil {
+			return fmt.Errorf("seeking remote file: %w", err)
+		}
+		return copyWithContext(ctx, f, r)
+	})
 }
 
 // Download reads the remote file for verification.
 func (b *SFTPBackend) Download(ctx context.Context, remotePath string) (io.ReadCloser, error) {
-	_ = ctx
-	f, err := b.client.Open(b.remotePath(remotePath))
+	var out io.ReadCloser
+	err := b.withClient(func(client *sftp.Client) error {
+		f, err := client.Open(b.remotePath(remotePath))
+		if err != nil {
+			return fmt.Errorf("opening remote file: %w", err)
+		}
+		out = f
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("opening remote file: %w", err)
+		return nil, err
 	}
-	return f, nil
+	return out, nil
 }
 
 // Delete removes a file from the remote path.
 func (b *SFTPBackend) Delete(ctx context.Context, remotePath string) error {
 	_ = ctx
-	if err := b.client.Remove(b.remotePath(remotePath)); err != nil {
-		return fmt.Errorf("removing remote file: %w", err)
-	}
-	return nil
+	return b.withClient(func(client *sftp.Client) error {
+		if err := client.Remove(b.remotePath(remotePath)); err != nil {
+			return fmt.Errorf("removing remote file: %w", err)
+		}
+		return nil
+	})
 }
 
 // List returns entries in the remote directory.
 func (b *SFTPBackend) List(ctx context.Context, remoteDir string) ([]Entry, error) {
 	_ = ctx
-	infos, err := b.client.ReadDir(b.remotePath(remoteDir))
+	var entries []Entry
+	err := b.withClient(func(client *sftp.Client) error {
+		infos, err := client.ReadDir(b.remotePath(remoteDir))
+		if err != nil {
+			return fmt.Errorf("reading remote directory: %w", err)
+		}
+		entries = make([]Entry, 0, len(infos))
+		for _, info := range infos {
+			entries = append(entries, Entry{
+				Name:    info.Name(),
+				Size:    info.Size(),
+				ModTime: info.ModTime(),
+				IsDir:   info.IsDir(),
+			})
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("reading remote directory: %w", err)
-	}
-	entries := make([]Entry, 0, len(infos))
-	for _, info := range infos {
-		entries = append(entries, Entry{
-			Name:    info.Name(),
-			Size:    info.Size(),
-			ModTime: info.ModTime(),
-			IsDir:   info.IsDir(),
-		})
+		return nil, err
 	}
 	return entries, nil
 }
@@ -146,11 +154,19 @@ func (b *SFTPBackend) List(ctx context.Context, remoteDir string) ([]Entry, erro
 // RemoteSize returns the size of the remote file.
 func (b *SFTPBackend) RemoteSize(ctx context.Context, remotePath string) (int64, error) {
 	_ = ctx
-	info, err := b.client.Stat(b.remotePath(remotePath))
+	var size int64
+	err := b.withClient(func(client *sftp.Client) error {
+		info, err := client.Stat(b.remotePath(remotePath))
+		if err != nil {
+			return fmt.Errorf("stat remote file: %w", err)
+		}
+		size = info.Size()
+		return nil
+	})
 	if err != nil {
-		return 0, fmt.Errorf("stat remote file: %w", err)
+		return 0, err
 	}
-	return info.Size(), nil
+	return size, nil
 }
 
 // remotePath joins the base path with the relative path.
@@ -195,4 +211,25 @@ func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) error {
 			return fmt.Errorf("reading upload data: %w", readErr)
 		}
 	}
+}
+
+func (b *SFTPBackend) withClient(fn func(client *sftp.Client) error) error {
+	sshClient, err := sshConnect(&sshConnectInfo{
+		Host:     b.cfg.Host,
+		Username: b.cfg.Username,
+		Password: b.cfg.Password,
+		KeyFile:  b.cfg.KeyFile,
+	})
+	if err != nil {
+		return fmt.Errorf("connecting SSH: %w", err)
+	}
+	defer sshClient.Close()
+
+	client, err := sftp.NewClient(sshClient)
+	if err != nil {
+		return fmt.Errorf("creating SFTP client: %w", err)
+	}
+	defer client.Close()
+
+	return fn(client)
 }

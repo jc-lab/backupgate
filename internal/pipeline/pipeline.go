@@ -88,6 +88,11 @@ func (p *Pipeline) NewUploadReader(key string, expectedSize int64) (reader.Uploa
 	return p.bufMgr.NewFullBuffer(key, expectedSize)
 }
 
+// HealthCheck verifies the storage backend is reachable.
+func (p *Pipeline) HealthCheck(ctx context.Context) error {
+	return p.backend.HealthCheck(ctx)
+}
+
 // processFullyImmediately: receive + hash + buffer + upload in parallel.
 // On disconnect, resume from buffer offset. On verification failure, re-upload from buffer (once).
 func (p *Pipeline) processFullyImmediately(ctx context.Context, key string, keyCfg *config.KeyConfig, body reader.UploadReader, meta UploadMetadata) (*UploadResult, error) {
