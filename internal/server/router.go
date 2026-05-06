@@ -4,8 +4,11 @@
 package server
 
 import (
+	"log/slog"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jc-lab/backupgate/internal/api"
 	"github.com/jc-lab/backupgate/internal/config"
@@ -29,15 +32,36 @@ func NewRouter(handler *api.Handler, mode config.APIMode) *Router {
 
 // ServeHTTP routes requests to the S3 or HTTP handler based on detection mode.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	start := time.Now()
+	remoteIP := remoteIP(req.RemoteAddr)
 	protocol := r.detectProtocol(req)
+	slog.Debug("request start",
+		"method", req.Method,
+		"remote_ip", remoteIP,
+		"path", req.URL.Path,
+		"protocol", protocol,
+		"content-length", req.Header.Get("content-length"),
+	)
+
+	rw := &statusResponseWriter{ResponseWriter: w}
+	defer func() {
+		slog.Debug("request end",
+			"method", req.Method,
+			"remote_ip", remoteIP,
+			"path", req.URL.Path,
+			"protocol", protocol,
+			"status_code", rw.statusCode,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
+	}()
 
 	switch protocol {
 	case "s3":
-		r.handler.HandleS3(w, req)
+		r.handler.HandleS3(rw, req)
 	case "http":
-		r.handler.HandleHTTP(w, req)
+		r.handler.HandleHTTP(rw, req)
 	default:
-		http.Error(w, "unable to detect protocol", http.StatusBadRequest)
+		http.Error(rw, "unable to detect protocol", http.StatusBadRequest)
 	}
 }
 
@@ -56,4 +80,29 @@ func (r *Router) detectProtocol(req *http.Request) string {
 
 	// Default to HTTP API
 	return "http"
+}
+
+func remoteIP(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return remoteAddr
+	}
+	return host
+}
+
+type statusResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (w *statusResponseWriter) WriteHeader(statusCode int) {
+	w.statusCode = statusCode
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *statusResponseWriter) Write(p []byte) (int, error) {
+	if w.statusCode == 0 {
+		w.statusCode = http.StatusOK
+	}
+	return w.ResponseWriter.Write(p)
 }
