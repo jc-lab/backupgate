@@ -15,6 +15,7 @@ import (
 
 	"github.com/jc-lab/backupgate/internal/auth"
 	"github.com/jc-lab/backupgate/internal/config"
+	"github.com/jc-lab/backupgate/internal/requestmeta"
 )
 
 type AwsRequest struct {
@@ -31,12 +32,19 @@ type AwsRequest struct {
 }
 
 func NewAwsRequest(r *http.Request) *AwsRequest {
-	return &AwsRequest{
-		Request:   r,
-		body:      newHashedReader(r.Body, sha256.New()),
-		RequestId: newRequestID(),
-		Key:       extractKey(r),
+	areq := &AwsRequest{
+		Request: r,
+		body:    newHashedReader(r.Body, sha256.New()),
+		Key:     extractKey(r),
 	}
+
+	if info := requestmeta.FromContext(r.Context()); info != nil {
+		areq.RequestId = info.RequestID
+	} else {
+		areq.RequestId = newRequestID()
+	}
+
+	return areq
 }
 
 func newRequestID() string {
@@ -63,24 +71,24 @@ func (areq *AwsRequest) Authenticate(chain *auth.Chain) (string, error) {
 	accessKey := credential[0]
 	date, region, service := credential[1], credential[2], credential[3]
 	if service != "s3" || credential[4] != "aws4_request" {
-		return "", fmt.Errorf("unsupported credential scope")
+		return accessKey, fmt.Errorf("unsupported credential scope")
 	}
 
 	secret, ok := chain.LookupSecret(accessKey)
 	if !ok {
-		return "", fmt.Errorf("unknown access key")
+		return accessKey, fmt.Errorf("unknown access key")
 	}
 
 	signedHeaders := fields["SignedHeaders"]
 	providedSignature := fields["Signature"]
 	if signedHeaders == "" || providedSignature == "" {
-		return "", fmt.Errorf("authorization header missing signed headers or signature")
+		return accessKey, fmt.Errorf("authorization header missing signed headers or signature")
 	}
 	signedHeadersArr := strings.Split(signedHeaders, ";")
 
 	amzDate := areq.Request.Header.Get("x-amz-date")
 	if amzDate == "" {
-		return "", fmt.Errorf("missing x-amz-date")
+		return accessKey, fmt.Errorf("missing x-amz-date")
 	}
 
 	scope := strings.Join([]string{date, region, service, "aws4_request"}, "/")
@@ -93,7 +101,7 @@ func (areq *AwsRequest) Authenticate(chain *auth.Chain) (string, error) {
 	}, "\n")
 	expected := hex.EncodeToString(hmacSHA256(sigV4SigningKey(secret, date, region, service), []byte(stringToSign)))
 	if !hmac.Equal([]byte(expected), []byte(providedSignature)) {
-		return "", fmt.Errorf("signature mismatch")
+		return accessKey, fmt.Errorf("signature mismatch")
 	}
 
 	areq.AuthorizedHeaders = make(http.Header)

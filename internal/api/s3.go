@@ -6,12 +6,9 @@ package api
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/xml"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -19,10 +16,10 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/jc-lab/backupgate/internal/config"
 	"github.com/jc-lab/backupgate/internal/pipeline"
+	"github.com/jc-lab/backupgate/internal/requestmeta"
 )
 
 // S3Handler handles S3-compatible API requests.
@@ -58,11 +55,16 @@ func (s *S3Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	chain, ok := s.handler.authChain(areq.Key)
 	if !ok {
 		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "no auth chain for key")
+		return
 	}
-	if _, err := areq.Authenticate(chain); err != nil {
+	username, err := areq.Authenticate(chain)
+	if err != nil {
+		s.logAuthFailure(r.Context(), areq.Key, username, "s3", err)
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", err.Error())
 		return
 	}
+	requestmeta.SetUser(r.Context(), username)
+	s.logAuthenticated(r.Context(), areq.Key, username, "s3")
 
 	keyCfg, ok := s.handler.cfg.ResolveKeyConfig(areq.Key)
 	if !ok {
@@ -153,6 +155,29 @@ func (s *S3Handler) getBucketLocation(w http.ResponseWriter, r *http.Request) {
 	_ = xml.NewEncoder(w).Encode(data)
 }
 
+func (s *S3Handler) logAuthenticated(ctx context.Context, key, username, protocol string) {
+	if info := requestmeta.FromContext(ctx); info != nil {
+		slog.Debug("authentication success",
+			"request_id", info.RequestID,
+			"protocol", protocol,
+			"key", key,
+			"user", username,
+		)
+	}
+}
+
+func (s *S3Handler) logAuthFailure(ctx context.Context, key, username, protocol string, cause error) {
+	if info := requestmeta.FromContext(ctx); info != nil {
+		slog.Warn("authentication failed",
+			"request_id", info.RequestID,
+			"protocol", protocol,
+			"key", key,
+			"user", username,
+			"error", cause.Error(),
+		)
+	}
+}
+
 func parseAuthFields(s string) map[string]string {
 	fields := make(map[string]string)
 	for _, part := range strings.Split(s, ",") {
@@ -223,13 +248,6 @@ func hmacSHA256(key, data []byte) []byte {
 	return h.Sum(nil)
 }
 
-func normalizeS3PayloadHash(v string) string {
-	if v == "" || v == "UNSIGNED-PAYLOAD" || strings.HasPrefix(v, "STREAMING-") {
-		return ""
-	}
-	return v
-}
-
 func writeS3Error(w http.ResponseWriter, status int, code, message string) {
 	level := slog.LevelWarn
 	if status >= http.StatusInternalServerError {
@@ -247,14 +265,4 @@ func writeS3Error(w http.ResponseWriter, status int, code, message string) {
 	w.WriteHeader(status)
 	_, _ = w.Write([]byte(xmlHeader))
 	_ = xml.NewEncoder(w).Encode(S3ErrorResult{Code: code, Message: message})
-}
-
-func newS3RequestID() string {
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		return hex.EncodeToString([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
-	}
-	buf[6] = (buf[6] & 0x0f) | 0x40
-	buf[8] = (buf[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", buf[0:4], buf[4:6], buf[6:8], buf[8:10], buf[10:])
 }

@@ -4,6 +4,7 @@
 package server
 
 import (
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/jc-lab/backupgate/internal/api"
 	"github.com/jc-lab/backupgate/internal/config"
+	"github.com/jc-lab/backupgate/internal/requestmeta"
 )
 
 // Router dispatches incoming requests to the appropriate S3 or HTTP handler
@@ -35,7 +37,10 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	start := time.Now()
 	remoteIP := remoteIP(req.RemoteAddr)
 	protocol := r.detectProtocol(req)
+	req = req.WithContext(requestmeta.WithInfo(req.Context()))
+	requestID := requestID(req.Context())
 	slog.Debug("request start",
+		"request_id", requestID,
 		"method", req.Method,
 		"remote_ip", remoteIP,
 		"path", req.URL.Path,
@@ -46,6 +51,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	rw := &statusResponseWriter{ResponseWriter: w}
 	defer func() {
 		slog.Debug("request end",
+			"request_id", requestID,
 			"method", req.Method,
 			"remote_ip", remoteIP,
 			"path", req.URL.Path,
@@ -88,6 +94,13 @@ func remoteIP(remoteAddr string) string {
 		return remoteAddr
 	}
 	return host
+}
+
+func requestID(ctx context.Context) string {
+	if info := requestmeta.FromContext(ctx); info != nil {
+		return info.RequestID
+	}
+	return ""
 }
 
 type statusResponseWriter struct {

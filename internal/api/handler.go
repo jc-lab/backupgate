@@ -59,7 +59,7 @@ func (h *Handler) authenticate(r *http.Request, key string) (string, error) {
 
 	chain, ok := h.authChain(key)
 	if !ok {
-		return "", auth.ErrAuthentication
+		return username, auth.ErrAuthentication
 	}
 
 	return chain.Authenticate(r.Context(), &auth.AuthRequest{

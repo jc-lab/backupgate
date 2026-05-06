@@ -4,13 +4,16 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 
 	"github.com/jc-lab/backupgate/internal/config"
 	"github.com/jc-lab/backupgate/internal/pipeline"
+	"github.com/jc-lab/backupgate/internal/requestmeta"
 )
 
 // HTTPHandler handles HTTP API requests (POST uploads with Basic Auth).
@@ -35,10 +38,15 @@ func (h *HTTPHandler) postUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing upload key")
 		return
 	}
-	if _, err := h.handler.authenticate(r, key); err != nil {
+	attemptUser, _, _ := r.BasicAuth()
+	username, err := h.handler.authenticate(r, key)
+	if err != nil {
+		h.logAuthFailure(r.Context(), key, attemptUser, "http", err)
 		writeError(w, http.StatusUnauthorized, "authentication failed")
 		return
 	}
+	requestmeta.SetUser(r.Context(), username)
+	h.logAuthenticated(r.Context(), key, username, "http")
 	keyCfg, ok := h.handler.cfg.ResolveKeyConfig(key)
 	if !ok {
 		writeError(w, http.StatusNotFound, "unknown key")
@@ -80,4 +88,27 @@ func (h *HTTPHandler) postUpload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", `"`+result.MD5+`"`)
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(result)
+}
+
+func (h *HTTPHandler) logAuthenticated(ctx context.Context, key, username, protocol string) {
+	if info := requestmeta.FromContext(ctx); info != nil {
+		slog.Debug("authentication success",
+			"request_id", info.RequestID,
+			"protocol", protocol,
+			"key", key,
+			"user", username,
+		)
+	}
+}
+
+func (h *HTTPHandler) logAuthFailure(ctx context.Context, key, username, protocol string, cause error) {
+	if info := requestmeta.FromContext(ctx); info != nil {
+		slog.Warn("authentication failed",
+			"request_id", info.RequestID,
+			"protocol", protocol,
+			"key", key,
+			"user", username,
+			"error", cause.Error(),
+		)
+	}
 }
