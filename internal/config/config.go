@@ -106,10 +106,29 @@ type RsyncConfig struct {
 
 // KeyConfig holds per-key policy settings.
 type KeyConfig struct {
-	BufferMode   BufferMode     `yaml:"buffer_mode"`
-	Verification bool           `yaml:"verification"`
-	Rotation     RotationConfig `yaml:"rotation"`
-	Auth         []AuthConfig   `yaml:"auth"`
+	BufferMode   BufferMode `yaml:"buffer_mode"`
+	Verification bool       `yaml:"verification"`
+	// DetachBackupFromRequest controls whether backup jobs are detached from the
+	// lifecycle of the HTTP request.
+	//
+	// When false, the backup uses the request context and is canceled if the
+	// client disconnects, the request times out, or the request context is otherwise
+	// canceled.
+	//
+	// When true, the backup uses a background context and continues running even if
+	// the client request is canceled.
+	//
+	// The default value is true.
+	DetachBackupFromRequest *bool          `yaml:"detach_backup_from_request"`
+	Rotation                RotationConfig `yaml:"rotation"`
+	Auth                    []AuthConfig   `yaml:"auth"`
+}
+
+func (k *KeyConfig) GetDetachBackupFromRequest() bool {
+	if k.DetachBackupFromRequest == nil {
+		return true
+	}
+	return *k.DetachBackupFromRequest
 }
 
 // RotationConfig holds rotation policy settings.

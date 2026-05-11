@@ -71,7 +71,11 @@ func (h *HTTPHandler) postUpload(w http.ResponseWriter, r *http.Request) {
 		body = buf
 	}
 
-	result, err := h.handler.pipeline.Process(r.Context(), key, body, pipeline.UploadMetadata{
+	ctx := r.Context()
+	if keyCfg.GetDetachBackupFromRequest() {
+		ctx = context.Background()
+	}
+	result, err := h.handler.pipeline.Process(ctx, key, body, pipeline.UploadMetadata{
 		ContentLength:  r.ContentLength,
 		ExpectedSHA256: r.Header.Get("X-Backup-SHA256"),
 	})

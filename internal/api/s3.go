@@ -125,10 +125,15 @@ func (s *S3Handler) putObject(areq *AwsRequest, w http.ResponseWriter) {
 		body = buf
 	}
 
-	result, err := s.handler.pipeline.Process(areq.Request.Context(), areq.Key, body, pipeline.UploadMetadata{
+	ctx := areq.Request.Context()
+	if keyCfg.GetDetachBackupFromRequest() {
+		ctx = context.Background()
+	}
+	result, err := s.handler.pipeline.Process(ctx, areq.Key, body, pipeline.UploadMetadata{
 		ContentLength:  areq.Request.ContentLength,
 		ExpectedSHA256: areq.ExpectedContentSha256,
 	})
+
 	if err != nil {
 		status := http.StatusInternalServerError
 		code := "InternalError"
