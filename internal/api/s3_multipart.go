@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"crypto/md5"
 	"crypto/rand"
 	"encoding/hex"
@@ -153,10 +154,15 @@ func (s *S3Handler) completeMultipartUpload(areq *AwsRequest, w http.ResponseWri
 	}
 	session.mu.Unlock()
 
+	ctx := areq.Context()
+	if areq.KeyCfg.GetDetachBackupFromRequest() {
+		ctx = context.Background()
+	}
+
 	assembled := reader.NewAssembledReader(partReaders)
 	defer assembled.Close()
 
-	result, err := s.handler.pipeline.Process(areq.Context(), session.key, assembled, pipeline.UploadMetadata{
+	result, err := s.handler.pipeline.Process(ctx, session.key, assembled, pipeline.UploadMetadata{
 		ContentLength:  total,
 		ExpectedSHA256: "",
 	})
